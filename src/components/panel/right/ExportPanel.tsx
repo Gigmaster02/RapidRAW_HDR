@@ -18,6 +18,10 @@ import {
   Status,
   ExportState,
   FileFormats,
+  OutputColorSpace,
+  OutputBitDepth,
+  OUTPUT_COLOR_SPACE_OPTIONS,
+  getOutputBitDepthOptions,
   WatermarkAnchor,
 } from '../../ui/ExportImportProperties';
 import { Invokes, SelectedImage, AppSettings } from '../../ui/AppProperties';
@@ -183,6 +187,11 @@ export default function ExportPanel({
     setFileFormat,
     jpegQuality,
     setJpegQuality,
+    outputColorSpace,
+    setOutputColorSpace,
+    outputBitDepth,
+    setOutputBitDepth,
+    jpegExportMode,
     enableResize,
     setEnableResize,
     resizeMode,
@@ -253,6 +262,7 @@ export default function ExportPanel({
   const filenameInputRef = useRef<HTMLInputElement>(null);
   const osPlatform = useOsPlatform();
   const isAndroid = osPlatform === 'android';
+  const outputBitDepthOptions = useMemo(() => getOutputBitDepthOptions(fileFormat), [fileFormat]);
 
   const { status, progress, errorMessage } = exportState;
   const isExporting = status === Status.Exporting;
@@ -339,6 +349,9 @@ export default function ExportPanel({
     const exportSettings: ExportSettings = {
       filenameTemplate,
       jpegQuality,
+      outputColorSpace,
+      outputBitDepth,
+      jpegExportMode,
       keepMetadata,
       preserveTimestamps,
       resize: enableResize ? { mode: resizeMode, value: resizeValue, dontEnlarge } : null,
@@ -363,6 +376,9 @@ export default function ExportPanel({
     adjustments,
     fileFormat,
     jpegQuality,
+    outputColorSpace,
+    outputBitDepth,
+    jpegExportMode,
     enableResize,
     resizeMode,
     resizeValue,
@@ -415,6 +431,9 @@ export default function ExportPanel({
     const exportSettings: ExportSettings = {
       filenameTemplate: finalFilenameTemplate,
       jpegQuality: jpegQuality,
+      outputColorSpace,
+      outputBitDepth,
+      jpegExportMode,
       keepMetadata,
       preserveTimestamps,
       resize: enableResize ? { mode: resizeMode, value: resizeValue, dontEnlarge } : null,
@@ -560,6 +579,29 @@ export default function ExportPanel({
                   />
                 </div>
               )}
+            </Section>
+
+            <Section title="Output Profile">
+              <Dropdown
+                options={OUTPUT_COLOR_SPACE_OPTIONS}
+                value={outputColorSpace}
+                onChange={(value) => setOutputColorSpace(value as OutputColorSpace)}
+                disabled={isExporting}
+                className="w-full"
+              />
+              {outputBitDepthOptions.length > 0 && (
+                <Dropdown
+                  options={outputBitDepthOptions}
+                  value={outputBitDepth}
+                  onChange={(value) => setOutputBitDepth(value as OutputBitDepth)}
+                  disabled={isExporting}
+                  className="w-full"
+                  placeholder="Select bit depth"
+                />
+              )}
+              <Text variant={TextVariants.label} color={TextColors.secondary} className="leading-5">
+                Choose the delivery colorspace now. PNG and TIFF can also be forced to a high-bit-depth export path.
+              </Text>
             </Section>
 
             <Section title="File Naming">

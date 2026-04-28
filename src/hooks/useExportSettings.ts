@@ -1,9 +1,20 @@
-import { useState, useMemo, useCallback } from 'react';
-import { ExportPreset, WatermarkAnchor } from '../components/ui/ExportImportProperties';
+import { useState, useMemo, useCallback, useEffect } from 'react';
+import {
+  ExportPreset,
+  WatermarkAnchor,
+  OutputColorSpace,
+  OutputBitDepth,
+  JpegExportMode,
+  getDefaultOutputBitDepth,
+  getOutputBitDepthOptions,
+} from '../components/ui/ExportImportProperties';
 
 export function useExportSettings() {
   const [fileFormat, setFileFormat] = useState('jpeg');
   const [jpegQuality, setJpegQuality] = useState(90);
+  const [outputColorSpace, setOutputColorSpace] = useState<OutputColorSpace>(OutputColorSpace.Srgb);
+  const [outputBitDepth, setOutputBitDepth] = useState<OutputBitDepth | null>(null);
+  const [jpegExportMode, setJpegExportMode] = useState<JpegExportMode>(JpegExportMode.Standard);
   const [enableResize, setEnableResize] = useState(false);
   const [resizeMode, setResizeMode] = useState('longEdge');
   const [resizeValue, setResizeValue] = useState(2048);
@@ -21,9 +32,30 @@ export function useExportSettings() {
   const [watermarkSpacing, setWatermarkSpacing] = useState(5);
   const [watermarkOpacity, setWatermarkOpacity] = useState(75);
 
+  useEffect(() => {
+    const bitDepthOptions = getOutputBitDepthOptions(fileFormat);
+
+    if (bitDepthOptions.length === 0) {
+      if (outputBitDepth !== null) {
+        setOutputBitDepth(null);
+      }
+      return;
+    }
+
+    const isCurrentBitDepthSupported =
+      outputBitDepth !== null && bitDepthOptions.some((option) => option.value === outputBitDepth);
+
+    if (!isCurrentBitDepthSupported) {
+      setOutputBitDepth(getDefaultOutputBitDepth(fileFormat));
+    }
+  }, [fileFormat, outputBitDepth]);
+
   const handleApplyPreset = useCallback((preset: ExportPreset) => {
     setFileFormat(preset.fileFormat);
     setJpegQuality(preset.jpegQuality);
+    setOutputColorSpace(preset.outputColorSpace ?? OutputColorSpace.Srgb);
+    setOutputBitDepth(preset.outputBitDepth ?? null);
+    setJpegExportMode(preset.jpegExportMode ?? JpegExportMode.Standard);
     setEnableResize(preset.enableResize);
     setResizeMode(preset.resizeMode);
     setResizeValue(preset.resizeValue);
@@ -46,6 +78,9 @@ export function useExportSettings() {
     () => ({
       fileFormat,
       jpegQuality,
+      outputColorSpace,
+      outputBitDepth,
+      jpegExportMode,
       enableResize,
       resizeMode,
       resizeValue,
@@ -66,6 +101,9 @@ export function useExportSettings() {
     [
       fileFormat,
       jpegQuality,
+      outputColorSpace,
+      outputBitDepth,
+      jpegExportMode,
       enableResize,
       resizeMode,
       resizeValue,
@@ -90,6 +128,12 @@ export function useExportSettings() {
     setFileFormat,
     jpegQuality,
     setJpegQuality,
+    outputColorSpace,
+    setOutputColorSpace,
+    outputBitDepth,
+    setOutputBitDepth,
+    jpegExportMode,
+    setJpegExportMode,
     enableResize,
     setEnableResize,
     resizeMode,

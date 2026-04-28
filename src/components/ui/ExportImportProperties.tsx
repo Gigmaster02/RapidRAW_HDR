@@ -13,6 +13,50 @@ export enum FileFormats {
   Cube = 'cube',
 }
 
+export enum OutputColorSpace {
+  Srgb = 'srgb',
+  DisplayP3 = 'displayP3',
+  Rec2020 = 'rec2020',
+  Rec2100Pq = 'rec2100Pq',
+}
+
+export enum JpegExportMode {
+  Standard = 'standard',
+  UltraHdr = 'ultraHdr',
+}
+
+export enum OutputBitDepth {
+  Eight = 8,
+  Ten = 10,
+  Sixteen = 16,
+}
+
+export const OUTPUT_COLOR_SPACE_OPTIONS = [
+  { label: 'sRGB', value: OutputColorSpace.Srgb },
+  { label: 'Display P3', value: OutputColorSpace.DisplayP3 },
+  { label: 'Rec. 2020', value: OutputColorSpace.Rec2020 },
+  { label: 'Rec. 2100 PQ', value: OutputColorSpace.Rec2100Pq },
+];
+
+export const getOutputBitDepthOptions = (formatId: string) => {
+  switch (formatId) {
+    case FileFormats.Png:
+      return [
+        { label: '8-bit', value: OutputBitDepth.Eight },
+        { label: '16-bit', value: OutputBitDepth.Sixteen },
+      ];
+    case FileFormats.Tiff:
+      return [{ label: '16-bit', value: OutputBitDepth.Sixteen }];
+    default:
+      return [];
+  }
+};
+
+export const getDefaultOutputBitDepth = (formatId: string): OutputBitDepth | null => {
+  const [defaultOption] = getOutputBitDepthOptions(formatId);
+  return defaultOption?.value ?? null;
+};
+
 export const FILE_FORMATS: Array<FileFormat> = [
   { id: FileFormats.Jpeg, name: 'JPEG', extensions: ['jpg', 'jpeg'] },
   { id: FileFormats.Png, name: 'PNG', extensions: ['png'] },
@@ -36,6 +80,9 @@ export const FILENAME_VARIABLES: Array<string> = [
 export interface ExportSettings {
   filenameTemplate: string | null;
   jpegQuality: number;
+  outputColorSpace: OutputColorSpace;
+  outputBitDepth: OutputBitDepth | null;
+  jpegExportMode: JpegExportMode;
   keepMetadata: boolean;
   preserveTimestamps: boolean;
   resize: {
@@ -102,6 +149,9 @@ export interface ExportPreset {
   name: string;
   fileFormat: string;
   jpegQuality: number;
+  outputColorSpace: OutputColorSpace;
+  outputBitDepth: OutputBitDepth | null;
+  jpegExportMode: JpegExportMode;
   enableResize: boolean;
   resizeMode: string;
   resizeValue: number;

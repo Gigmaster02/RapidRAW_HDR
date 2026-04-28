@@ -637,6 +637,7 @@ pub fn write_image_with_metadata(
     output_format: &str,
     keep_metadata: bool,
     strip_gps: bool,
+    is_srgb: bool,
 ) -> Result<(), String> {
     // FIXME: temporary solution until I find a way to write metadata to TIFF
     if !keep_metadata || output_format.to_lowercase() == "tiff" {
@@ -1018,7 +1019,7 @@ pub fn write_image_with_metadata(
 
     metadata.set_tag(ExifTag::Software("RapidRAW".to_string()));
     metadata.set_tag(ExifTag::Orientation(vec![1u16]));
-    metadata.set_tag(ExifTag::ColorSpace(vec![1u16]));
+    metadata.set_tag(ExifTag::ColorSpace(vec![if is_srgb { 1u16 } else { 65535u16 }]));
 
     if let Err(e) = metadata.write_to_vec(image_bytes, file_type) {
         log::warn!("Failed to write metadata: {}", e);

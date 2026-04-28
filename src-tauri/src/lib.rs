@@ -258,10 +258,46 @@ struct ResizeOptions {
     dont_enlarge: bool,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum OutputColorSpace {
+    Srgb,
+    DisplayP3,
+    Rec2020,
+    Rec2100Pq,
+}
+
+impl OutputColorSpace {
+    fn is_srgb(self) -> bool {
+        matches!(self, Self::Srgb)
+    }
+}
+
+fn default_output_color_space() -> OutputColorSpace {
+    OutputColorSpace::Srgb
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum JpegExportMode {
+    Standard,
+    UltraHdr,
+}
+
+fn default_jpeg_export_mode() -> JpegExportMode {
+    JpegExportMode::Standard
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ExportSettings {
     jpeg_quality: u8,
+    #[serde(default = "default_output_color_space")]
+    output_color_space: OutputColorSpace,
+    #[serde(default)]
+    output_bit_depth: Option<u8>,
+    #[serde(default = "default_jpeg_export_mode")]
+    jpeg_export_mode: JpegExportMode,
     resize: Option<ResizeOptions>,
     keep_metadata: bool,
     #[serde(default)]
@@ -2032,7 +2068,7 @@ fn save_image_with_metadata(
         .unwrap_or("")
         .to_lowercase();
 
-    let mut image_bytes = encode_image_to_bytes(image, &extension, export_settings.jpeg_quality)?;
+    let mut image_bytes = encode_image_to_bytes(image, &extension, export_settings)?;
 
     exif_processing::write_image_with_metadata(
         &mut image_bytes,
@@ -2040,6 +2076,7 @@ fn save_image_with_metadata(
         &extension,
         export_settings.keep_metadata,
         export_settings.strip_gps,
+        export_settings.output_color_space.is_srgb(),
     )?;
 
     #[cfg(target_os = "android")]
@@ -2125,10 +2162,11 @@ fn encode_grayscale_to_png(bitmap: &GrayImage) -> Result<Vec<u8>, String> {
 fn encode_image_to_bytes(
     image: &DynamicImage,
     output_format: &str,
-    jpeg_quality: u8,
+    export_settings: &ExportSettings,
 ) -> Result<Vec<u8>, String> {
     let mut image_bytes = Vec::new();
     let mut cursor = Cursor::new(&mut image_bytes);
+    let jpeg_quality = export_settings.jpeg_quality;
 
     match output_format.to_lowercase().as_str() {
         "jxl" => {
@@ -2180,10 +2218,21 @@ fn encode_image_to_bytes(
                 .map_err(|e| e.to_string())?;
         }
         "png" => {
-            let image_to_encode = if image.as_rgb32f().is_some() {
-                DynamicImage::ImageRgb16(image.to_rgb16())
+            let requested_bit_depth = export_settings.output_bit_depth.unwrap_or(match image {
+                DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_) => 16,
+                _ => 8,
+            });
+
+            let image_to_encode = if requested_bit_depth > 8 {
+                if image.color().has_alpha() {
+                    DynamicImage::ImageRgba16(image.to_rgba16())
+                } else {
+                    DynamicImage::ImageRgb16(image.to_rgb16())
+                }
+            } else if image.color().has_alpha() {
+                DynamicImage::ImageRgba8(image.to_rgba8())
             } else {
-                image.clone()
+                DynamicImage::ImageRgb8(image.to_rgb8())
             };
 
             image_to_encode
@@ -2191,7 +2240,20 @@ fn encode_image_to_bytes(
                 .map_err(|e| e.to_string())?;
         }
         "tiff" => {
-            DynamicImage::ImageRgb16(image.to_rgb16())
+            let requested_bit_depth = export_settings.output_bit_depth.unwrap_or(16);
+            let image_to_encode = if requested_bit_depth > 8 {
+                if image.color().has_alpha() {
+                    DynamicImage::ImageRgba16(image.to_rgba16())
+                } else {
+                    DynamicImage::ImageRgb16(image.to_rgb16())
+                }
+            } else if image.color().has_alpha() {
+                DynamicImage::ImageRgba8(image.to_rgba8())
+            } else {
+                DynamicImage::ImageRgb8(image.to_rgb8())
+            };
+
+            image_to_encode
                 .write_to(&mut cursor, image::ImageFormat::Tiff)
                 .map_err(|e| e.to_string())?;
         }
@@ -2922,7 +2984,7 @@ async fn estimate_export_size(
     let preview_bytes = encode_image_to_bytes(
         &processed_preview,
         &output_format,
-        export_settings.jpeg_quality,
+        &export_settings,
     )?;
     let preview_byte_size = preview_bytes.len();
 
@@ -3107,7 +3169,7 @@ async fn estimate_batch_export_size(
     let preview_bytes = encode_image_to_bytes(
         &processed_preview,
         &output_format,
-        export_settings.jpeg_quality,
+        &export_settings,
     )?;
     let single_image_estimated_size = preview_bytes.len();
 

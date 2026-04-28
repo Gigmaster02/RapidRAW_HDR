@@ -291,6 +291,12 @@ pub struct ExportPreset {
     pub name: String,
     pub file_format: String,
     pub jpeg_quality: u8,
+    #[serde(default = "default_output_color_space")]
+    pub output_color_space: String,
+    #[serde(default)]
+    pub output_bit_depth: Option<u8>,
+    #[serde(default = "default_jpeg_export_mode")]
+    pub jpeg_export_mode: String,
     pub enable_resize: bool,
     pub resize_mode: String,
     pub resize_value: u32,
@@ -312,6 +318,14 @@ pub struct ExportPreset {
     pub last_export_path: Option<String>,
 }
 
+fn default_output_color_space() -> String {
+    "srgb".to_string()
+}
+
+fn default_jpeg_export_mode() -> String {
+    "standard".to_string()
+}
+
 fn default_export_presets() -> Vec<ExportPreset> {
     vec![
         ExportPreset {
@@ -319,6 +333,9 @@ fn default_export_presets() -> Vec<ExportPreset> {
             name: "High Quality".to_string(),
             file_format: "jpeg".to_string(),
             jpeg_quality: 95,
+            output_color_space: default_output_color_space(),
+            output_bit_depth: None,
+            jpeg_export_mode: default_jpeg_export_mode(),
             enable_resize: false,
             resize_mode: "longEdge".to_string(),
             resize_value: 2048,
@@ -341,6 +358,9 @@ fn default_export_presets() -> Vec<ExportPreset> {
             name: "Fast (Web)".to_string(),
             file_format: "jpeg".to_string(),
             jpeg_quality: 80,
+            output_color_space: default_output_color_space(),
+            output_bit_depth: None,
+            jpeg_export_mode: default_jpeg_export_mode(),
             enable_resize: true,
             resize_mode: "width".to_string(),
             resize_value: 2048,
