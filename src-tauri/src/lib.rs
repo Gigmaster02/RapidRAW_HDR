@@ -271,6 +271,10 @@ impl OutputColorSpace {
     fn is_srgb(self) -> bool {
         matches!(self, Self::Srgb)
     }
+
+    fn uses_pq_transfer(self) -> bool {
+        matches!(self, Self::Rec2100Pq)
+    }
 }
 
 fn default_output_color_space() -> OutputColorSpace {
@@ -2159,6 +2163,96 @@ fn encode_grayscale_to_png(bitmap: &GrayImage) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
+fn srgb_channel_to_linear(value: f32) -> f32 {
+    let value = value.max(0.0);
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_channel_to_srgb(value: f32) -> f32 {
+    let value = value.max(0.0);
+    if value <= 0.0031308 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn linear_channel_to_pq(value: f32) -> f32 {
+    const M1: f32 = 2610.0 / 16384.0;
+    const M2: f32 = 2523.0 / 32.0;
+    const C1: f32 = 3424.0 / 4096.0;
+    const C2: f32 = 2413.0 / 128.0;
+    const C3: f32 = 2392.0 / 128.0;
+
+    let normalized_luminance = (value.clamp(0.0, 1.0) * 203.0 / 10_000.0).clamp(0.0, 1.0);
+    let powered = normalized_luminance.powf(M1);
+    ((C1 + C2 * powered) / (1.0 + C3 * powered)).powf(M2)
+}
+
+fn output_color_space_matrix(color_space: OutputColorSpace) -> Option<[[f32; 3]; 3]> {
+    match color_space {
+        OutputColorSpace::Srgb => None,
+        OutputColorSpace::DisplayP3 => Some([
+            [0.8225, 0.1775, 0.0],
+            [0.0332, 0.9668, 0.0],
+            [0.0171, 0.0724, 0.9105],
+        ]),
+        OutputColorSpace::Rec2020 | OutputColorSpace::Rec2100Pq => Some([
+            [0.6274, 0.3293, 0.0433],
+            [0.0691, 0.9195, 0.0114],
+            [0.0164, 0.0880, 0.8956],
+        ]),
+    }
+}
+
+fn apply_output_color_space_transform(
+    image: &DynamicImage,
+    output_color_space: OutputColorSpace,
+) -> DynamicImage {
+    if output_color_space.is_srgb() {
+        return image.clone();
+    }
+
+    let matrix = output_color_space_matrix(output_color_space);
+    let mut rgba = image.to_rgba32f();
+
+    for pixel in rgba.pixels_mut() {
+        let linear_r = srgb_channel_to_linear(pixel[0]);
+        let linear_g = srgb_channel_to_linear(pixel[1]);
+        let linear_b = srgb_channel_to_linear(pixel[2]);
+
+        let (mut out_r, mut out_g, mut out_b) = if let Some(matrix) = matrix {
+            (
+                matrix[0][0] * linear_r + matrix[0][1] * linear_g + matrix[0][2] * linear_b,
+                matrix[1][0] * linear_r + matrix[1][1] * linear_g + matrix[1][2] * linear_b,
+                matrix[2][0] * linear_r + matrix[2][1] * linear_g + matrix[2][2] * linear_b,
+            )
+        } else {
+            (linear_r, linear_g, linear_b)
+        };
+
+        out_r = out_r.max(0.0);
+        out_g = out_g.max(0.0);
+        out_b = out_b.max(0.0);
+
+        if output_color_space.uses_pq_transfer() {
+            pixel[0] = linear_channel_to_pq(out_r);
+            pixel[1] = linear_channel_to_pq(out_g);
+            pixel[2] = linear_channel_to_pq(out_b);
+        } else {
+            pixel[0] = linear_channel_to_srgb(out_r).clamp(0.0, 1.0);
+            pixel[1] = linear_channel_to_srgb(out_g).clamp(0.0, 1.0);
+            pixel[2] = linear_channel_to_srgb(out_b).clamp(0.0, 1.0);
+        }
+    }
+
+    DynamicImage::ImageRgba32F(rgba)
+}
+
 fn encode_image_to_bytes(
     image: &DynamicImage,
     output_format: &str,
@@ -2167,20 +2261,21 @@ fn encode_image_to_bytes(
     let mut image_bytes = Vec::new();
     let mut cursor = Cursor::new(&mut image_bytes);
     let jpeg_quality = export_settings.jpeg_quality;
+    let transformed_image = apply_output_color_space_transform(image, export_settings.output_color_space);
 
     match output_format.to_lowercase().as_str() {
         "jxl" => {
-            let (width, height) = image.dimensions();
-            let has_alpha = image.color().has_alpha();
+            let (width, height) = transformed_image.dimensions();
+            let has_alpha = transformed_image.color().has_alpha();
 
             let jxl_data = if jpeg_quality == 100 {
                 if has_alpha {
-                    let rgba = image.to_rgba8();
+                    let rgba = transformed_image.to_rgba8();
                     LosslessConfig::new()
                         .encode(rgba.as_raw(), width, height, PixelLayout::Rgba8)
                         .map_err(|e| format!("Failed to encode lossless JXL: {}", e))?
                 } else {
-                    let rgb = image.to_rgb8();
+                    let rgb = transformed_image.to_rgb8();
                     LosslessConfig::new()
                         .encode(rgb.as_raw(), width, height, PixelLayout::Rgb8)
                         .map_err(|e| format!("Failed to encode lossless JXL: {}", e))?
@@ -2190,12 +2285,12 @@ fn encode_image_to_bytes(
                 let distance = distance.max(0.01);
 
                 if has_alpha {
-                    let rgba = image.to_rgba8();
+                    let rgba = transformed_image.to_rgba8();
                     LossyConfig::new(distance)
                         .encode(rgba.as_raw(), width, height, PixelLayout::Rgba8)
                         .map_err(|e| format!("Failed to encode lossy JXL: {}", e))?
                 } else {
-                    let rgb = image.to_rgb8();
+                    let rgb = transformed_image.to_rgb8();
                     LossyConfig::new(distance)
                         .encode(rgb.as_raw(), width, height, PixelLayout::Rgb8)
                         .map_err(|e| format!("Failed to encode lossy JXL: {}", e))?
@@ -2205,34 +2300,34 @@ fn encode_image_to_bytes(
             return Ok(jxl_data);
         }
         "webp" => {
-            let encoder = webp::Encoder::from_image(image)
+            let encoder = webp::Encoder::from_image(&transformed_image)
                 .map_err(|_| "Failed to create WebP encoder".to_string())?;
             let webp_mem = encoder.encode(jpeg_quality as f32);
             return Ok(webp_mem.to_vec());
         }
         "jpg" | "jpeg" => {
-            let rgb_image = image.to_rgb8();
+            let rgb_image = transformed_image.to_rgb8();
             let encoder = JpegEncoder::new_with_quality(&mut cursor, jpeg_quality);
             rgb_image
                 .write_with_encoder(encoder)
                 .map_err(|e| e.to_string())?;
         }
         "png" => {
-            let requested_bit_depth = export_settings.output_bit_depth.unwrap_or(match image {
+            let requested_bit_depth = export_settings.output_bit_depth.unwrap_or(match &transformed_image {
                 DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_) => 16,
                 _ => 8,
             });
 
             let image_to_encode = if requested_bit_depth > 8 {
-                if image.color().has_alpha() {
-                    DynamicImage::ImageRgba16(image.to_rgba16())
+                if transformed_image.color().has_alpha() {
+                    DynamicImage::ImageRgba16(transformed_image.to_rgba16())
                 } else {
-                    DynamicImage::ImageRgb16(image.to_rgb16())
+                    DynamicImage::ImageRgb16(transformed_image.to_rgb16())
                 }
-            } else if image.color().has_alpha() {
-                DynamicImage::ImageRgba8(image.to_rgba8())
+            } else if transformed_image.color().has_alpha() {
+                DynamicImage::ImageRgba8(transformed_image.to_rgba8())
             } else {
-                DynamicImage::ImageRgb8(image.to_rgb8())
+                DynamicImage::ImageRgb8(transformed_image.to_rgb8())
             };
 
             image_to_encode
@@ -2242,15 +2337,15 @@ fn encode_image_to_bytes(
         "tiff" => {
             let requested_bit_depth = export_settings.output_bit_depth.unwrap_or(16);
             let image_to_encode = if requested_bit_depth > 8 {
-                if image.color().has_alpha() {
-                    DynamicImage::ImageRgba16(image.to_rgba16())
+                if transformed_image.color().has_alpha() {
+                    DynamicImage::ImageRgba16(transformed_image.to_rgba16())
                 } else {
-                    DynamicImage::ImageRgb16(image.to_rgb16())
+                    DynamicImage::ImageRgb16(transformed_image.to_rgb16())
                 }
-            } else if image.color().has_alpha() {
-                DynamicImage::ImageRgba8(image.to_rgba8())
+            } else if transformed_image.color().has_alpha() {
+                DynamicImage::ImageRgba8(transformed_image.to_rgba8())
             } else {
-                DynamicImage::ImageRgb8(image.to_rgb8())
+                DynamicImage::ImageRgb8(transformed_image.to_rgb8())
             };
 
             image_to_encode
@@ -2258,7 +2353,7 @@ fn encode_image_to_bytes(
                 .map_err(|e| e.to_string())?;
         }
         "avif" => {
-            image
+            transformed_image
                 .write_to(&mut cursor, image::ImageFormat::Avif)
                 .map_err(|e| e.to_string())?;
         }

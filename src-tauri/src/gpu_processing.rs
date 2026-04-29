@@ -47,10 +47,43 @@ pub struct WgpuDisplay {
     pub config: wgpu::SurfaceConfiguration,
     pub pipeline: wgpu::RenderPipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
-    pub sampler: wgpu::Sampler,
     pub transform_buffer: wgpu::Buffer,
     pub latest_transform: DisplayTransform,
     pub current_bind_group: Option<wgpu::BindGroup>,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct OutputMode {
+    hdr_display_enabled: u32,
+    crop_offset_x: u32,
+    crop_offset_y: u32,
+    crop_width: u32,
+    crop_height: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+}
+
+fn srgb_channel_to_linear(value: f32) -> f32 {
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn display_background_for_surface(color: [f32; 4], hdr_surface: bool) -> [f32; 4] {
+    if !hdr_surface {
+        return color;
+    }
+
+    [
+        srgb_channel_to_linear(color[0]),
+        srgb_channel_to_linear(color[1]),
+        srgb_channel_to_linear(color[2]),
+        color[3],
+    ]
 }
 
 impl WgpuDisplay {
@@ -238,12 +271,19 @@ pub fn get_or_init_gpu_context(
             .ok_or("Failed to get main window")?;
 
         let swapchain_caps = surface.get_capabilities(&adapter);
-        let swapchain_format = swapchain_caps
+        let swapchain_format = if swapchain_caps
             .formats
-            .iter()
-            .copied()
-            .find(|f| !f.is_srgb())
-            .unwrap_or(swapchain_caps.formats[0]);
+            .contains(&wgpu::TextureFormat::Rgba16Float)
+        {
+            wgpu::TextureFormat::Rgba16Float
+        } else {
+            swapchain_caps
+                .formats
+                .iter()
+                .copied()
+                .find(|f| !f.is_srgb())
+                .unwrap_or(swapchain_caps.formats[0])
+        };
 
         let alpha_mode = if cfg!(target_os = "windows")
             && swapchain_caps
@@ -294,7 +334,6 @@ pub fn get_or_init_gpu_context(
             };
             @group(0) @binding(0) var<uniform> transform: Transform;
             @group(0) @binding(1) var tex: texture_2d<f32>;
-            @group(0) @binding(2) var samp: sampler;
 
             struct VertexOutput {
                 @builtin(position) pos: vec4<f32>,
@@ -334,6 +373,37 @@ pub fn get_or_init_gpu_context(
                 return out;
             }
 
+            fn sample_display_texture(uv: vec2<f32>) -> vec4<f32> {
+                let max_coords = max(vec2<i32>(transform.image_size) - vec2<i32>(1, 1), vec2<i32>(0, 0));
+
+                if (transform.pixelated > 0.5) {
+                    let nearest = clamp(
+                        vec2<i32>(floor(uv * transform.texture_size)),
+                        vec2<i32>(0, 0),
+                        max_coords
+                    );
+                    return textureLoad(tex, nearest, 0);
+                }
+
+                let sample_position = uv * transform.texture_size - vec2<f32>(0.5, 0.5);
+                let base = floor(sample_position);
+                let frac = fract(sample_position);
+
+                let coord00 = clamp(vec2<i32>(base), vec2<i32>(0, 0), max_coords);
+                let coord10 = clamp(coord00 + vec2<i32>(1, 0), vec2<i32>(0, 0), max_coords);
+                let coord01 = clamp(coord00 + vec2<i32>(0, 1), vec2<i32>(0, 0), max_coords);
+                let coord11 = clamp(coord00 + vec2<i32>(1, 1), vec2<i32>(0, 0), max_coords);
+
+                let c00 = textureLoad(tex, coord00, 0);
+                let c10 = textureLoad(tex, coord10, 0);
+                let c01 = textureLoad(tex, coord01, 0);
+                let c11 = textureLoad(tex, coord11, 0);
+
+                let top = mix(c00, c10, frac.x);
+                let bottom = mix(c01, c11, frac.x);
+                return mix(top, bottom, frac.y);
+            }
+
             @fragment
             fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 if (in.uv.x < 0.0 || in.uv.x > 1.0 || in.uv.y < 0.0 || in.uv.y > 1.0) {
@@ -352,10 +422,10 @@ pub fn get_or_init_gpu_context(
                     let nearest_uv = (texel_coords + vec2<f32>(0.5, 0.5)) / transform.texture_size;
 
                     let clamped_nearest = clamp(nearest_uv, min_uv, max_uv);
-                    return textureSample(tex, samp, clamped_nearest);
+                    return sample_display_texture(clamped_nearest);
                 } else {
                     let clamped_uv = clamp(adjusted_uv, min_uv, max_uv);
-                    return textureSample(tex, samp, clamped_uv);
+                    return sample_display_texture(clamped_uv);
                 }
             }
         ";
@@ -383,16 +453,10 @@ pub fn get_or_init_gpu_context(
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     count: None,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    count: None,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 },
             ],
         });
@@ -439,15 +503,7 @@ pub fn get_or_init_gpu_context(
             mapped_at_creation: false,
         });
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Display Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-
+        let hdr_surface = swapchain_format == wgpu::TextureFormat::Rgba16Float;
         Some(WgpuDisplay {
             surface,
             config,
@@ -462,10 +518,15 @@ pub fn get_or_init_gpu_context(
                 texture_size: [100.0, 100.0],
                 pixelated: 0.0,
                 _pad: 0.0,
-                bg_primary: [24.0 / 255.0, 24.0 / 255.0, 24.0 / 255.0, 1.0],
-                bg_secondary: [35.0 / 255.0, 35.0 / 255.0, 35.0 / 255.0, 1.0],
+                bg_primary: display_background_for_surface(
+                    [24.0 / 255.0, 24.0 / 255.0, 24.0 / 255.0, 1.0],
+                    hdr_surface,
+                ),
+                bg_secondary: display_background_for_surface(
+                    [35.0 / 255.0, 35.0 / 255.0, 35.0 / 255.0, 1.0],
+                    hdr_surface,
+                ),
             },
-            sampler,
             current_bind_group: None,
         })
     } else {
@@ -621,6 +682,10 @@ pub struct GpuProcessor {
     pub working_texture_view: wgpu::TextureView,
     pub output_texture: wgpu::Texture,
     pub output_texture_view: wgpu::TextureView,
+    pub display_output_texture: wgpu::Texture,
+    pub display_output_texture_view: wgpu::TextureView,
+    output_mode_buffer: wgpu::Buffer,
+    hdr_display_enabled: bool,
 }
 
 const FLARE_MAP_SIZE: u32 = 512;
@@ -629,6 +694,16 @@ impl GpuProcessor {
     pub fn new(context: GpuContext, max_width: u32, max_height: u32) -> Result<Self, String> {
         let device = &context.device;
         const MAX_MASK_BINDINGS: u32 = 1;
+        let hdr_display_enabled = context
+            .display
+            .lock()
+            .ok()
+            .and_then(|display| {
+                display
+                    .as_ref()
+                    .map(|display| display.config.format == wgpu::TextureFormat::Rgba16Float)
+            })
+            .unwrap_or(false);
 
         let blur_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Blur Shader"),
@@ -969,6 +1044,26 @@ impl GpuProcessor {
             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
             count: None,
         });
+        bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 11 + MAX_MASK_BINDINGS,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format: wgpu::TextureFormat::Rgba16Float,
+                view_dimension: wgpu::TextureViewDimension::D2,
+            },
+            count: None,
+        });
+        bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 12 + MAX_MASK_BINDINGS,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
 
         let main_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Main BGL"),
@@ -994,6 +1089,12 @@ impl GpuProcessor {
             label: Some("Adjustments Buffer"),
             size: std::mem::size_of::<AllAdjustments>() as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let output_mode_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Output Mode Buffer"),
+            size: std::mem::size_of::<OutputMode>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -1112,6 +1213,30 @@ impl GpuProcessor {
         });
         let output_texture_view = output_texture.create_view(&Default::default());
 
+        let display_output_texture_size = if hdr_display_enabled {
+            max_tile_size
+        } else {
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            }
+        };
+        let display_output_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("HDR Display Output Texture"),
+            size: display_output_texture_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let display_output_texture_view = display_output_texture.create_view(&Default::default());
+
         Ok(Self {
             context,
             blur_bgl,
@@ -1144,6 +1269,10 @@ impl GpuProcessor {
             working_texture_view,
             output_texture,
             output_texture_view,
+            display_output_texture,
+            display_output_texture_view,
+            output_mode_buffer,
+            hdr_display_enabled,
         })
     }
 
@@ -1160,6 +1289,9 @@ impl GpuProcessor {
         let queue = &self.context.queue;
         let scale = (width.min(height) as f32) / 1080.0;
         const MAX_MASK_BINDINGS: u32 = 1;
+        let hdr_display_enabled = output_to_display
+            && self.hdr_display_enabled
+            && request.adjustments.global.show_clipping == 0;
 
         let bounds = request.roi.unwrap_or(Roi {
             x: 0,
@@ -1489,6 +1621,20 @@ impl GpuProcessor {
                     bytemuck::bytes_of(&tile_adjustments),
                 );
 
+                let crop_x_start = x_start - input_x_start;
+                let crop_y_start = y_start - input_y_start;
+                let output_mode = OutputMode {
+                    hdr_display_enabled: if hdr_display_enabled { 1 } else { 0 },
+                    crop_offset_x: crop_x_start,
+                    crop_offset_y: crop_y_start,
+                    crop_width: tile_width,
+                    crop_height: tile_height,
+                    _pad0: 0,
+                    _pad1: 0,
+                    _pad2: 0,
+                };
+                queue.write_buffer(&self.output_mode_buffer, 0, bytemuck::bytes_of(&output_mode));
+
                 let mut bind_group_entries = vec![
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -1564,6 +1710,14 @@ impl GpuProcessor {
                     binding: 10 + MAX_MASK_BINDINGS,
                     resource: wgpu::BindingResource::Sampler(&self.flare_sampler),
                 });
+                bind_group_entries.push(wgpu::BindGroupEntry {
+                    binding: 11 + MAX_MASK_BINDINGS,
+                    resource: wgpu::BindingResource::TextureView(&self.display_output_texture_view),
+                });
+                bind_group_entries.push(wgpu::BindGroupEntry {
+                    binding: 12 + MAX_MASK_BINDINGS,
+                    resource: self.output_mode_buffer.as_entire_binding(),
+                });
 
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Tile Bind Group"),
@@ -1581,9 +1735,6 @@ impl GpuProcessor {
                         1,
                     );
                 }
-
-                let crop_x_start = x_start - input_x_start;
-                let crop_y_start = y_start - input_y_start;
 
                 if output_to_display {
                     main_encoder.copy_texture_to_texture(
@@ -1772,11 +1923,33 @@ fn process_and_get_dynamic_image_inner(
                 depth_or_array_layers: 1,
             },
         );
+        if old_state.processor.hdr_display_enabled && processor.hdr_display_enabled {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &old_state.processor.display_output_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &processor.display_output_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: copy_w,
+                    height: copy_h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         queue.submit(Some(encoder.finish()));
 
         if let Ok(mut display_lock) = context.display.lock()
             && let Some(display) = display_lock.as_mut()
         {
+            let use_hdr_display_texture = display.config.format == wgpu::TextureFormat::Rgba16Float;
             display.latest_transform.texture_size =
                 [processor_state.width as f32, processor_state.height as f32];
             queue.write_buffer(
@@ -1795,12 +1968,12 @@ fn process_and_get_dynamic_image_inner(
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::TextureView(
-                            &processor.output_texture_view,
+                            if use_hdr_display_texture {
+                                &processor.display_output_texture_view
+                            } else {
+                                &processor.output_texture_view
+                            },
                         ),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&display.sampler),
                     },
                 ],
                 label: Some("Migrated Display Bind Group"),
@@ -2036,6 +2209,9 @@ fn process_and_get_dynamic_image_inner(
         && let Ok(mut display_lock) = context.display.lock()
         && let Some(display) = display_lock.as_mut()
     {
+        let use_hdr_display_texture = display.config.format == wgpu::TextureFormat::Rgba16Float
+            && processor.hdr_display_enabled
+            && request.adjustments.global.show_clipping == 0;
         display.latest_transform.image_size = [width as f32, height as f32];
         display.latest_transform.texture_size =
             [processor_state.width as f32, processor_state.height as f32];
@@ -2055,11 +2231,13 @@ fn process_and_get_dynamic_image_inner(
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&processor.output_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&display.sampler),
+                    resource: wgpu::BindingResource::TextureView(
+                        if use_hdr_display_texture {
+                            &processor.display_output_texture_view
+                        } else {
+                            &processor.output_texture_view
+                        },
+                    ),
                 },
             ],
             label: None,

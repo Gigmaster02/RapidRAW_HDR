@@ -208,6 +208,20 @@ const HSL_RANGES: array<HslRange, 8> = array<HslRange, 8>(
 @group(0) @binding(10) var flare_texture: texture_2d<f32>;
 @group(0) @binding(11) var flare_sampler: sampler;
 
+struct OutputMode {
+    hdr_display_enabled: u32,
+    crop_offset_x: u32,
+    crop_offset_y: u32,
+    crop_width: u32,
+    crop_height: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+}
+
+@group(0) @binding(12) var display_output_texture: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(13) var<uniform> output_mode: OutputMode;
+
 const LUMA_COEFF = vec3<f32>(0.2126, 0.7152, 0.0722);
 
 fn get_luma(c: vec3<f32>) -> f32 {
@@ -229,6 +243,26 @@ fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
     let higher = (1.0 + a) * pow(c_clamped, vec3<f32>(1.0 / 2.4)) - a;
     let lower = c_clamped * 12.92;
     return select(higher, lower, c_clamped <= cutoff);
+}
+
+fn max_component(c: vec3<f32>) -> f32 {
+    return max(c.r, max(c.g, c.b));
+}
+
+fn build_hdr_display_color(reference_linear: vec3<f32>, styled_srgb: vec3<f32>) -> vec3<f32> {
+    let styled_linear = srgb_to_linear(clamp(styled_srgb, vec3<f32>(0.0), vec3<f32>(1.0)));
+    let headroom = max(1.0, max_component(max(reference_linear, vec3<f32>(0.0))));
+    return styled_linear * headroom;
+}
+
+fn should_write_hdr_display(local_coord: vec2<u32>) -> bool {
+    if (output_mode.hdr_display_enabled == 0u) {
+        return false;
+    }
+
+    let crop_min = vec2<u32>(output_mode.crop_offset_x, output_mode.crop_offset_y);
+    let crop_max = crop_min + vec2<u32>(output_mode.crop_width, output_mode.crop_height);
+    return all(local_coord >= crop_min) && all(local_coord < crop_max);
 }
 
 fn rgb_to_hsv(c: vec3<f32>) -> vec3<f32> {
@@ -1560,6 +1594,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         final_rgb = mix(final_rgb, lut_color, adjustments.global.lut_intensity);
     }
 
+    let hdr_display_style = final_rgb;
+    let hdr_reference_linear = if (adjustments.global.is_raw_image == 1u) {
+        max(tonal_blurred, vec3<f32>(0.0))
+    } else {
+        max(srgb_to_linear(tonal_blurred), vec3<f32>(0.0))
+    };
+
     if (adjustments.global.grain_amount > 0.0) {
         let g = adjustments.global;
         let coord = vec2<f32>(absolute_coord_i);
@@ -1590,6 +1631,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let dither_amount = 1.0 / 255.0;
     final_rgb += dither(id.xy) * dither_amount;
+
+    if (should_write_hdr_display(id.xy)) {
+        let hdr_display_rgb = build_hdr_display_color(hdr_reference_linear, hdr_display_style);
+        textureStore(display_output_texture, vec2<u32>(absolute_coord), vec4<f32>(max(hdr_display_rgb, vec3<f32>(0.0)), original_alpha));
+    }
 
     textureStore(output_texture, id.xy, vec4<f32>(clamp(final_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), original_alpha));
 }
