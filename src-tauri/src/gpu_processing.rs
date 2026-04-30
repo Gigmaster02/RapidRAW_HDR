@@ -402,11 +402,14 @@ pub fn get_or_init_gpu_context(
 
                 // display_color_space: 0 = sRGB, 1 = Display-P3, 2 = Linear
                 // The processed preview texture is scene-linear; convert to display-encoded for SDR.
-                if (transform.display_color_space == 2u) {
-                    return sampled;
+                var out_rgb = sampled.rgb;
+                if (transform.display_color_space != 2u) {
+                    out_rgb = linear_to_srgb(out_rgb);
                 }
-                let encoded = linear_to_srgb(sampled.rgb);
-                return vec4<f32>(encoded, sampled.a);
+
+                // Always output opaque alpha. Some backends/compositors treat low/NaN alpha as
+                // transparency and the canvas appears blank.
+                return vec4<f32>(out_rgb, 1.0);
             }
         ";
 
