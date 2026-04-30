@@ -51,6 +51,7 @@ use image::{
     DynamicImage, GenericImageView, GrayImage, ImageBuffer, ImageFormat, Luma, Rgb, RgbImage, Rgba,
     RgbaImage, imageops,
 };
+use image::ImageEncoder;
 use image_hdr::hdr_merge_images;
 use image_hdr::input::HDRInput;
 use imageproc::drawing::draw_line_segment_mut;

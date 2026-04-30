@@ -55,11 +55,24 @@ pub struct WgpuDisplay {
     pub current_bind_group: Option<wgpu::BindGroup>,
 }
 
-#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DisplayHdrCapabilities {
     pub enabled: bool,
     pub surface_format: Option<String>,
+}
+
+fn is_hdr_format(format: wgpu::TextureFormat) -> bool {
+    matches!(
+        format,
+        wgpu::TextureFormat::Rgba16Float
+            | wgpu::TextureFormat::Rgba32Float
+            | wgpu::TextureFormat::Rgb10a2Unorm
+            | wgpu::TextureFormat::Bgra8Unorm
+            | wgpu::TextureFormat::Bgra8UnormSrgb
+            | wgpu::TextureFormat::Rgba8Unorm
+            | wgpu::TextureFormat::Rgba8UnormSrgb
+    )
 }
 
 impl WgpuDisplay {
@@ -252,7 +265,7 @@ pub fn get_or_init_gpu_context(
             .formats
             .iter()
             .copied()
-            .find(|f| f.is_hdr())
+            .find(|f| is_hdr_format(*f))
             .or_else(|| {
                 swapchain_caps
                     .formats
@@ -528,7 +541,7 @@ pub fn get_display_hdr_capabilities(context: &GpuContext) -> DisplayHdrCapabilit
     let display_lock = context.display.lock().unwrap();
     if let Some(display) = display_lock.as_ref() {
         DisplayHdrCapabilities {
-            enabled: display.config.format.is_hdr(),
+            enabled: is_hdr_format(display.config.format),
             surface_format: Some(format!("{:?}", display.config.format)),
         }
     } else {
