@@ -53,11 +53,26 @@ pub struct WgpuDisplay {
     pub current_bind_group: Option<wgpu::BindGroup>,
 }
 
-#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DisplayHdrCapabilities {
     pub enabled: bool,
     pub surface_format: Option<String>,
+}
+
+trait TextureFormatHdrExt {
+    fn is_hdr(&self) -> bool;
+}
+
+impl TextureFormatHdrExt for wgpu::TextureFormat {
+    fn is_hdr(&self) -> bool {
+        matches!(
+            self,
+            wgpu::TextureFormat::Rgba16Float
+                | wgpu::TextureFormat::Rgba32Float
+                | wgpu::TextureFormat::Rgb10a2Unorm
+        )
+    }
 }
 
 impl WgpuDisplay {
