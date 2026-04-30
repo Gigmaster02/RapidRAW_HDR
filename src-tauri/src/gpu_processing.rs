@@ -40,6 +40,8 @@ pub struct DisplayTransform {
     pub _pad: f32,
     pub bg_primary: [f32; 4],
     pub bg_secondary: [f32; 4],
+    pub display_color_space: u32,
+    pub _pad2: [u32; 3],
 }
 
 pub struct WgpuDisplay {
@@ -321,10 +323,21 @@ pub fn get_or_init_gpu_context(
                 _pad: f32,
                 bg_primary: vec4<f32>,
                 bg_secondary: vec4<f32>,
+                display_color_space: u32,
+                _pad2: vec3<u32>,
             };
             @group(0) @binding(0) var<uniform> transform: Transform;
             @group(0) @binding(1) var tex: texture_2d<f32>;
             @group(0) @binding(2) var samp: sampler;
+
+            fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+                let c_clamped = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+                let cutoff = vec3<f32>(0.0031308);
+                let a = vec3<f32>(0.055);
+                let higher = (1.0 + a) * pow(c_clamped, vec3<f32>(1.0 / 2.4)) - a;
+                let lower = c_clamped * 12.92;
+                return select(higher, lower, c_clamped <= cutoff);
+            }
 
             struct VertexOutput {
                 @builtin(position) pos: vec4<f32>,
@@ -377,16 +390,25 @@ pub fn get_or_init_gpu_context(
                 let min_uv = half_texel;
                 let max_uv = (transform.image_size / transform.texture_size) - half_texel;
 
+                var sampled: vec4<f32>;
                 if (transform.pixelated > 0.5) {
                     let texel_coords = floor(adjusted_uv * transform.texture_size);
                     let nearest_uv = (texel_coords + vec2<f32>(0.5, 0.5)) / transform.texture_size;
 
                     let clamped_nearest = clamp(nearest_uv, min_uv, max_uv);
-                    return textureSample(tex, samp, clamped_nearest);
+                    sampled = textureSample(tex, samp, clamped_nearest);
                 } else {
                     let clamped_uv = clamp(adjusted_uv, min_uv, max_uv);
-                    return textureSample(tex, samp, clamped_uv);
+                    sampled = textureSample(tex, samp, clamped_uv);
                 }
+
+                // display_color_space: 0 = sRGB, 1 = Display-P3, 2 = Linear
+                // The processed preview texture is scene-linear; convert to display-encoded for SDR.
+                if (transform.display_color_space == 2u) {
+                    return sampled;
+                }
+                let encoded = linear_to_srgb(sampled.rgb);
+                return vec4<f32>(encoded, sampled.a);
             }
         ";
 
@@ -494,6 +516,8 @@ pub fn get_or_init_gpu_context(
                 _pad: 0.0,
                 bg_primary: [24.0 / 255.0, 24.0 / 255.0, 24.0 / 255.0, 1.0],
                 bg_secondary: [35.0 / 255.0, 35.0 / 255.0, 35.0 / 255.0, 1.0],
+                display_color_space: 0,
+                _pad2: [0, 0, 0],
             },
             sampler,
             current_bind_group: None,

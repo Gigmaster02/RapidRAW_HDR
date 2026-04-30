@@ -353,6 +353,7 @@ pub struct WgpuTransformPayload {
     pub bg_primary: [f32; 4],
     pub bg_secondary: [f32; 4],
     pub pixelated: bool,
+    pub display_color_space: Option<String>,
 }
 
 pub struct DecodedImageCache {
@@ -1118,6 +1119,15 @@ async fn update_wgpu_transform(
             display.latest_transform.bg_primary = payload.bg_primary;
             display.latest_transform.bg_secondary = payload.bg_secondary;
             display.latest_transform.pixelated = if payload.pixelated { 1.0 } else { 0.0 };
+            display.latest_transform.display_color_space = match payload
+                .display_color_space
+                .as_deref()
+                .unwrap_or("srgb")
+            {
+                "linear" => 2,
+                "display-p3" => 1,
+                _ => 0,
+            };
 
             context.queue.write_buffer(
                 &display.transform_buffer,
