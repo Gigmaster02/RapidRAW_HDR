@@ -108,6 +108,11 @@ export enum Invokes {
   GetDisplayHdrCapabilities = 'get_display_hdr_capabilities_cmd',
 }
 
+export interface DisplayHdrCapabilities {
+  enabled: boolean;
+  surfaceFormat: string | null;
+}
+
 export enum Panel {
   Adjustments = 'adjustments',
   Ai = 'ai',

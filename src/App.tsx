@@ -97,6 +97,7 @@ import {
   AppSettings,
   BrushSettings,
   FilterCriteria,
+  DisplayHdrCapabilities,
   Invokes,
   ImageFile,
   Option,
@@ -451,6 +452,8 @@ function App() {
     progressMessage: '',
     stitchingSourcePaths: [],
   });
+
+  const [displayHdrCapabilities, setDisplayHdrCapabilities] = useState<DisplayHdrCapabilities | null>(null);
   const [negativeModalState, setNegativeModalState] = useState<NegativeConversionModalState>({
     isOpen: false,
     targetPaths: [],
@@ -1974,6 +1977,21 @@ function App() {
         isInitialMount.current = false;
       });
   }, [isAndroid]);
+
+  useEffect(() => {
+    invoke(Invokes.GetDisplayHdrCapabilities)
+      .then((caps: any) => {
+        if (caps && typeof caps.enabled === 'boolean') {
+          setDisplayHdrCapabilities({
+            enabled: caps.enabled,
+            surfaceFormat: typeof caps.surfaceFormat === 'string' ? caps.surfaceFormat : null,
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to get display HDR capabilities:', err);
+      });
+  }, []);
 
   useEffect(() => {
     if (isInitialMount.current || !appSettings) {
@@ -5508,6 +5526,7 @@ function App() {
                   selectedImage={selectedImage}
                   setExportState={setExportState}
                   appSettings={appSettings}
+                  displayHdrEnabled={displayHdrCapabilities?.enabled ?? false}
                   onSettingsChange={handleSettingsChange}
                   rootPath={rootPath}
                 />
