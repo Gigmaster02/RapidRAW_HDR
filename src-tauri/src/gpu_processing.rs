@@ -53,6 +53,13 @@ pub struct WgpuDisplay {
     pub current_bind_group: Option<wgpu::BindGroup>,
 }
 
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayHdrCapabilities {
+    pub enabled: bool,
+    pub surface_format: Option<String>,
+}
+
 impl WgpuDisplay {
     pub fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         if let Some(bind_group) = &self.current_bind_group {
@@ -238,11 +245,19 @@ pub fn get_or_init_gpu_context(
             .ok_or("Failed to get main window")?;
 
         let swapchain_caps = surface.get_capabilities(&adapter);
+        // Prefer an HDR surface format if available. If not, fall back to a linear format.
         let swapchain_format = swapchain_caps
             .formats
             .iter()
             .copied()
-            .find(|f| !f.is_srgb())
+            .find(|f| f.is_hdr())
+            .or_else(|| {
+                swapchain_caps
+                    .formats
+                    .iter()
+                    .copied()
+                    .find(|f| !f.is_srgb())
+            })
             .unwrap_or(swapchain_caps.formats[0]);
 
         let alpha_mode = if cfg!(target_os = "windows")
@@ -483,6 +498,21 @@ pub fn get_or_init_gpu_context(
     };
     *context_lock = Some(new_context.clone());
     Ok(new_context)
+}
+
+pub fn get_display_hdr_capabilities(context: &GpuContext) -> DisplayHdrCapabilities {
+    let display_lock = context.display.lock().unwrap();
+    if let Some(display) = display_lock.as_ref() {
+        DisplayHdrCapabilities {
+            enabled: display.config.format.is_hdr(),
+            surface_format: Some(format!("{:?}", display.config.format)),
+        }
+    } else {
+        DisplayHdrCapabilities {
+            enabled: false,
+            surface_format: None,
+        }
+    }
 }
 
 fn read_texture_data_roi(
