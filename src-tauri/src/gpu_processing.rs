@@ -2029,6 +2029,7 @@ fn process_and_get_dynamic_image_inner(
     // The only deciding factor of whether we block and read memory back synchronously
     // is if we are outputting to display (canvas rendering).
     let skip_readback = output_to_display;
+    let show_clipping_disabled = request.adjustments.global.show_clipping == 0;
 
     let (processed_pixels, out_w, out_h, out_x, out_y) = processor.run(
         &cache.texture_view,
@@ -2211,7 +2212,7 @@ fn process_and_get_dynamic_image_inner(
     {
         let use_hdr_display_texture = display.config.format == wgpu::TextureFormat::Rgba16Float
             && processor.hdr_display_enabled
-            && request.adjustments.global.show_clipping == 0;
+            && show_clipping_disabled;
         display.latest_transform.image_size = [width as f32, height as f32];
         display.latest_transform.texture_size =
             [processor_state.width as f32, processor_state.height as f32];
