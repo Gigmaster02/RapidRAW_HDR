@@ -1097,6 +1097,7 @@ export default function Editor({
               bgPrimary: state.bgPrimary || [0, 0, 0, 1],
               bgSecondary: state.bgSecondary || [0, 0, 0, 1],
               pixelated: false,
+              displayColorSpace: appSettings?.displayOutputColorSpace || 'srgb',
             },
           })
             .catch(() => {})
@@ -1163,6 +1164,7 @@ export default function Editor({
             bgPrimary: state.bgPrimary || [0, 0, 0, 1],
             bgSecondary: state.bgSecondary || [0, 0, 0, 1],
             pixelated: isZoomedIn,
+            displayColorSpace: appSettings?.displayOutputColorSpace || 'srgb',
           },
         })
           .catch((err) => console.warn('WGPU Sync Error:', err))

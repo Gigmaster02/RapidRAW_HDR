@@ -459,6 +459,7 @@ export default function SettingsPanel({
     imageCacheSize: appSettings?.imageCacheSize ?? 5,
     defaultRawTonemapper: appSettings?.defaultRawTonemapper || 'agx',
     defaultNonRawTonemapper: appSettings?.defaultNonRawTonemapper || 'basic',
+    displayOutputColorSpace: appSettings?.displayOutputColorSpace || 'srgb',
   });
   const [restartRequired, setRestartRequired] = useState(false);
   const [activeCategory, setActiveCategory] = useState('general');
@@ -510,6 +511,7 @@ export default function SettingsPanel({
       imageCacheSize: appSettings?.imageCacheSize ?? 5,
       defaultRawTonemapper: appSettings?.defaultRawTonemapper || 'agx',
       defaultNonRawTonemapper: appSettings?.defaultNonRawTonemapper || 'basic',
+      displayOutputColorSpace: appSettings?.displayOutputColorSpace || 'srgb',
     });
     setRestartRequired(false);
   }, [appSettings]);
@@ -1735,6 +1737,24 @@ export default function SettingsPanel({
                         id="wgpu-renderer-toggle"
                         label="Enable Direct WGPU Render"
                         onChange={(checked) => handleProcessingSettingChange('useWgpuRenderer', checked)}
+                      />
+                    </SettingItem>
+
+                    <SettingItem
+                      label="Display Color Space"
+                      description="Controls the output transform used for the editor canvas. If the preview looks washed out, try 'sRGB'."
+                    >
+                      <Dropdown
+                        onChange={(value: any) =>
+                          handleProcessingSettingChange('displayOutputColorSpace', value)
+                        }
+                        options={[
+                          { label: 'sRGB (default)', value: 'srgb' },
+                          { label: 'Display P3', value: 'display-p3' },
+                          { label: 'Linear (no display transform)', value: 'linear' },
+                        ]}
+                        value={processingSettings.displayOutputColorSpace}
+                        triggerClassName="bg-bg-primary"
                       />
                     </SettingItem>
 

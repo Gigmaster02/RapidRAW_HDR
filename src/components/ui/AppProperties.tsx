@@ -187,6 +187,7 @@ export interface AppSettings {
   waveformHeight?: number;
   activeWaveformChannel?: string;
   useWgpuRenderer?: boolean;
+  displayOutputColorSpace?: 'srgb' | 'display-p3' | 'linear';
   canvasInputMode?: 'mouse' | 'trackpad';
   zoomSpeedMultiplier?: number;
   keybinds?: { [action: string]: string[] };
