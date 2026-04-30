@@ -105,6 +105,12 @@ export enum Invokes {
   GenerateAllCommunityPreviews = 'generate_all_community_previews',
   SaveCommunityPreset = 'save_community_preset',
   SaveTempFile = 'save_temp_file',
+  GetDisplayHdrCapabilities = 'get_display_hdr_capabilities_cmd',
+}
+
+export interface DisplayHdrCapabilities {
+  enabled: boolean;
+  surfaceFormat: string | null;
 }
 
 export enum Panel {

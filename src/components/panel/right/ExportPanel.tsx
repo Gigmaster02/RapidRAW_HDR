@@ -34,6 +34,7 @@ interface ExportPanelProps {
   selectedImage: SelectedImage;
   setExportState(state: any): void;
   appSettings: AppSettings | null;
+  displayHdrEnabled?: boolean;
   onSettingsChange: (settings: AppSettings) => void;
   rootPath: string | null;
 }
@@ -175,6 +176,7 @@ export default function ExportPanel({
   selectedImage,
   setExportState,
   appSettings,
+  displayHdrEnabled,
   onSettingsChange,
   rootPath,
 }: ExportPanelProps) {
@@ -513,6 +515,7 @@ export default function ExportPanel({
   const canExport = numImages > 0;
   const isLut = fileFormat === FileFormats.Cube;
   const itemLabel = isLut ? 'LUT' : 'Image';
+  const isHdrFormat = fileFormat === FileFormats.Exr;
 
   return (
     <div className="flex flex-col h-full">
@@ -559,6 +562,17 @@ export default function ExportPanel({
                     fillOrigin="min"
                   />
                 </div>
+              )}
+
+              {isHdrFormat && (
+                <Text
+                  color={TextColors.secondary}
+                  variant={TextVariants.body}
+                  weight={TextWeights.normal}
+                  className="text-xs"
+                >
+                  OpenEXR exports scene-linear HDR data. HDR display is currently {displayHdrEnabled ? 'enabled' : 'not enabled'}.
+                </Text>
               )}
             </Section>
 

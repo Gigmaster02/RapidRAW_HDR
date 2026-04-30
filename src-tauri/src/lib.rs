@@ -27,6 +27,8 @@ mod tagging;
 mod tagging_utils;
 mod window_customizer;
 
+use crate::gpu_processing::{DisplayHdrCapabilities, get_display_hdr_capabilities};
+
 use std::collections::{HashMap, HashSet, VecDeque, hash_map::DefaultHasher};
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -319,6 +321,19 @@ pub struct WatermarkSettings {
 struct ImageDimensions {
     width: u32,
     height: u32,
+}
+
+#[tauri::command]
+fn get_display_hdr_capabilities_cmd(state: tauri::State<AppState>) -> DisplayHdrCapabilities {
+    let context_opt = state.gpu_context.lock().unwrap().clone();
+    if let Some(context) = context_opt {
+        get_display_hdr_capabilities(&context)
+    } else {
+        DisplayHdrCapabilities {
+            enabled: false,
+            surface_format: None,
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -2198,6 +2213,15 @@ fn encode_image_to_bytes(
         "avif" => {
             image
                 .write_to(&mut cursor, image::ImageFormat::Avif)
+                .map_err(|e| e.to_string())?;
+        }
+        "exr" => {
+            // Export as HDR OpenEXR with 32-bit float RGB. Values are in scene-linear space.
+            let (width, height) = image.dimensions();
+            let rgb = image.to_rgb32f();
+            let raw = rgb.into_raw();
+            image::codecs::openexr::OpenExrEncoder::new(&mut cursor)
+                .write_image(raw.as_slice(), width, height, image::ExtendedColorType::Rgb32F)
                 .map_err(|e| e.to_string())?;
         }
         _ => return Err(format!("Unsupported file format: {}", output_format)),
@@ -5229,6 +5253,7 @@ pub fn run() {
             frontend_ready,
             cancel_thumbnail_generation,
             update_wgpu_transform,
+            get_display_hdr_capabilities_cmd,
             image_processing::calculate_auto_adjustments,
             file_management::read_exif_for_paths,
             file_management::list_images_in_dir,

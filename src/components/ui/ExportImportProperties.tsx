@@ -10,6 +10,7 @@ export enum FileFormats {
   Webp = 'webp',
   Jxl = 'jxl',
   Avif = 'avif',
+  Exr = 'exr',
   Cube = 'cube',
 }
 
@@ -20,6 +21,7 @@ export const FILE_FORMATS: Array<FileFormat> = [
   { id: FileFormats.Webp, name: 'WebP', extensions: ['webp'] },
   { id: FileFormats.Jxl, name: 'JPEG XL', extensions: ['jxl'] },
   { id: FileFormats.Avif, name: 'AVIF', extensions: ['avif'] },
+  { id: FileFormats.Exr, name: 'OpenEXR (HDR)', extensions: ['exr'] },
   { id: FileFormats.Cube, name: 'CUBE LUT', extensions: ['cube'] },
 ];
 
