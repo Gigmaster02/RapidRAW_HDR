@@ -2221,8 +2221,9 @@ fn encode_image_to_bytes(
             let (width, height) = image.dimensions();
             let rgb = image.to_rgb32f();
             let raw = rgb.into_raw();
+            let raw_bytes: &[u8] = bytemuck::cast_slice(raw.as_slice());
             image::codecs::openexr::OpenExrEncoder::new(&mut cursor)
-                .write_image(raw.as_slice(), width, height, image::ExtendedColorType::Rgb32F)
+                .write_image(raw_bytes, width, height, image::ExtendedColorType::Rgb32F)
                 .map_err(|e| e.to_string())?;
         }
         _ => return Err(format!("Unsupported file format: {}", output_format)),
